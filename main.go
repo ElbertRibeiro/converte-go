@@ -6,23 +6,29 @@ import (
 	"log"
 	"net/http"
 	"os"
-
-	"github.com/unidoc/unioffice/v2/document"
+	"os/exec"
+	"path/filepath"
 )
 
 func convertRTFtoPDF(rtfPath string, pdfPath string) error {
-	// Abrir o arquivo RTF
-	doc, err := document.Open(rtfPath)
-	if err != nil {
-		return fmt.Errorf("erro ao abrir o arquivo RTF: %v", err)
+	// Verifique se o arquivo RTF existe
+	if _, err := os.Stat(rtfPath); os.IsNotExist(err) {
+		return fmt.Errorf("arquivo RTF não encontrado: %v", err)
 	}
 
-	// Salvar como PDF
-	err = doc.SaveToFile(pdfPath)
+	// Comando para converter RTF para PDF usando LibreOffice
+	cmd := exec.Command("libreoffice", "--headless", "--convert-to", "pdf", rtfPath, "--outdir", filepath.Dir(pdfPath))
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("erro ao salvar o arquivo PDF: %v", err)
+		return fmt.Errorf("erro ao converter RTF para PDF: %v\n%s", err, string(output))
 	}
 
+	// Verifique se o arquivo PDF foi criado
+	if _, err := os.Stat(pdfPath); os.IsNotExist(err) {
+		return fmt.Errorf("arquivo PDF não foi criado: %v", err)
+	}
+
+	log.Printf("Arquivo PDF gerado com sucesso em: %s", pdfPath)
 	return nil
 }
 
@@ -36,18 +42,26 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// Ler o arquivo enviado no corpo da requisição
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "Erro ao ler o arquivo", http.StatusBadRequest)
+		http.Error(w, "Erro ao ler o arquivo: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
+	// Criar o diretório temporário se não existir
+	tmpDir := "/tmp/rtf-to-pdf"
+	err = os.MkdirAll(tmpDir, 0755)
+	if err != nil {
+		http.Error(w, "Erro ao criar diretório temporário: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Criar um arquivo temporário para o RTF
-	rtfPath := "/tmp/" + header.Filename
-	pdfPath := "/tmp/output.pdf"
+	rtfPath := filepath.Join(tmpDir, header.Filename)
+	pdfPath := filepath.Join(tmpDir, "output.pdf")
 
 	outFile, err := os.Create(rtfPath)
 	if err != nil {
-		http.Error(w, "Erro ao criar arquivo temporário", http.StatusInternalServerError)
+		http.Error(w, "Erro ao criar arquivo temporário: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer outFile.Close()
@@ -55,21 +69,27 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// Copiar o conteúdo do arquivo enviado para o arquivo temporário
 	_, err = io.Copy(outFile, file)
 	if err != nil {
-		http.Error(w, "Erro ao salvar arquivo temporário", http.StatusInternalServerError)
+		http.Error(w, "Erro ao salvar arquivo temporário: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("Arquivo RTF salvo em: %s", rtfPath)
+	log.Printf("Convertendo RTF para PDF...")
 
 	// Converter RTF para PDF
 	err = convertRTFtoPDF(rtfPath, pdfPath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Erro ao converter RTF para PDF: %v", err), http.StatusInternalServerError)
+		log.Printf("Erro na conversão: %v", err)
+		http.Error(w, "Erro ao converter RTF para PDF: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("Arquivo PDF gerado em: %s", pdfPath)
 
 	// Abrir o arquivo PDF gerado
 	pdfFile, err := os.Open(pdfPath)
 	if err != nil {
-		http.Error(w, "Erro ao abrir o arquivo PDF", http.StatusInternalServerError)
+		http.Error(w, "Erro ao abrir o arquivo PDF: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer pdfFile.Close()
@@ -81,7 +101,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// Enviar o arquivo PDF como resposta
 	_, err = io.Copy(w, pdfFile)
 	if err != nil {
-		http.Error(w, "Erro ao enviar o arquivo PDF", http.StatusInternalServerError)
+		http.Error(w, "Erro ao enviar o arquivo PDF: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
