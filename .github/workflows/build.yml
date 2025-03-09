@@ -40,5 +40,5 @@ jobs:
         
     - name: Push Docker Image
       run: |
-        docker push ${{ secrets.DOCKER_USERNAME }}/image-libreoffice:latest
-        docker push ${{ secrets.DOCKER_USERNAME }}/image-libreoffice:1.0.${{ github.run_number }}
+        docker push ${{ secrets.DOCKER_USERNAME }}/rtf-to-pdf:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/rtf-to-pdf:1.0.${{ github.run_number }}
